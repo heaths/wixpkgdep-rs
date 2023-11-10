@@ -1,0 +1,15 @@
+[package]
+name = "wixpkgdep"
+version = "0.1.0"
+edition = "2021"
+authors = [
+    "Heath Stewart (https://github.com)",
+]
+license = "MIT"
+
+[dependencies.windows]
+version = "0.51.1"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+]
