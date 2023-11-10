@@ -4,6 +4,7 @@
         "HRESULT",
         "HSTRING",
         "PCWSTR",
+        "PWSTR",
         "subkey",
         "wixpkgdep"
     ]
