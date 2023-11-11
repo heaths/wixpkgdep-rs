@@ -5,6 +5,7 @@
         "HSTRING",
         "PCWSTR",
         "PWSTR",
+        "QWORD",
         "subkey",
         "wixpkgdep"
     ]
