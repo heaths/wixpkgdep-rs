@@ -4,11 +4,26 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug",
-            "preLaunchTask": "build",
-            "program": "${workspaceFolder}/target/debug/main",
-            "args": [],
+            "name": "chkdeps",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=chkdeps"
+                ]
+            },
+            "args": [
+                "--provider-key", "${input:providerKey}",
+                "--scope", "user"
+            ],
             "cwd": "${workspaceFolder}"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "providerKey",
+            "type": "promptString",
+            "description": "Provider key",
+            "default": "CPython-3.11"
         }
     ]
 }

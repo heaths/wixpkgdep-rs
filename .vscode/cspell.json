@@ -6,6 +6,7 @@
         "PCWSTR",
         "PWSTR",
         "QWORD",
+        "repr",
         "subkey",
         "wixpkgdep"
     ]
