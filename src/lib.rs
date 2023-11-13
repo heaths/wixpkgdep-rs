@@ -10,16 +10,20 @@ use windows::{
 
 mod registry;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Scope {
     User,
+
+    #[default]
     Machine,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub enum Attributes {
+    #[default]
     None,
+
     MinVersionInclusive = 0x100,
     MaxVersionInclusive = 0x200,
 }
@@ -64,7 +68,6 @@ where
 
     Ok(key
         .keys()?
-        .into_iter()
         .filter_map(|k| unsafe {
             if let Some(ignore) = ignore {
                 if ignore.contains(std::mem::transmute(&k.name)) {
@@ -74,18 +77,6 @@ where
             Some(k.name.clone())
         })
         .collect())
-}
-
-impl Default for Scope {
-    fn default() -> Self {
-        Scope::Machine
-    }
-}
-
-impl Default for Attributes {
-    fn default() -> Self {
-        Attributes::None
-    }
 }
 
 impl Display for Error {
@@ -126,9 +117,9 @@ impl FromStr for Scope {
     }
 }
 
-impl Into<windows::Win32::System::Registry::HKEY> for Scope {
-    fn into(self) -> windows::Win32::System::Registry::HKEY {
-        match self {
+impl From<Scope> for windows::Win32::System::Registry::HKEY {
+    fn from(value: Scope) -> Self {
+        match value {
             Scope::User => registry::HKEY_CURRENT_USER,
             Scope::Machine => registry::HKEY_LOCAL_MACHINE,
         }
