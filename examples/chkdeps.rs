@@ -3,7 +3,6 @@
 
 use clap::Parser;
 use std::error::Error;
-use wixpkgdep;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
@@ -18,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("{d}");
     }
 
-    if dependents.len() > 0 {
+    if !dependents.is_empty() {
         std::process::exit(1);
     }
 

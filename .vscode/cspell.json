@@ -1,13 +1,23 @@
 {
-    "words": [
-        "HKEY",
-        "HRESULT",
-        "HSTRING",
-        "PCWSTR",
-        "PWSTR",
-        "QWORD",
-        "repr",
-        "subkey",
-        "wixpkgdep"
-    ]
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "HKEY",
+    "HRESULT",
+    "HSTRING",
+    "PCWSTR",
+    "PWSTR",
+    "QWORD",
+    "repr",
+    "subkey",
+    "wixpkgdep"
+  ],
+  "overrides": [
+    {
+      "filename": "**/*.md",
+      "dictionaries": [
+        "rust"
+      ]
+    }
+  ]
 }

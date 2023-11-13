@@ -1,29 +1,31 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "chkdeps",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--example=chkdeps"
-                ]
-            },
-            "args": [
-                "--provider-key", "${input:providerKey}",
-                "--scope", "user"
-            ],
-            "cwd": "${workspaceFolder}"
-        }
-    ],
-    "inputs": [
-        {
-            "id": "providerKey",
-            "type": "promptString",
-            "description": "Provider key",
-            "default": "CPython-3.11"
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "chkdeps",
+      "cargo": {
+        "args": [
+          "build",
+          "--example=chkdeps"
+        ]
+      },
+      "args": [
+        "--provider-key",
+        "${input:providerKey}",
+        "--scope",
+        "user"
+      ],
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "providerKey",
+      "type": "promptString",
+      "description": "Provider key",
+      "default": "CPython-3.11"
+    }
+  ]
 }
