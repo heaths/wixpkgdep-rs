@@ -14,9 +14,7 @@ use windows::{
 pub use Registry::HKEY_CURRENT_USER;
 pub use Registry::HKEY_LOCAL_MACHINE;
 
-pub const E_FILE_NOT_FOUND: HRESULT =
-    HRESULT((0x80070000u32 | ERROR_FILE_NOT_FOUND.0 as u32) as i32);
-const E_MORE_DATA: HRESULT = HRESULT((0x80070000u32 | ERROR_MORE_DATA.0 as u32) as i32);
+pub const E_FILE_NOT_FOUND: HRESULT = HRESULT((0x80070000u32 | ERROR_FILE_NOT_FOUND.0) as i32);
 
 #[derive(Debug)]
 pub struct Key {
@@ -27,6 +25,7 @@ pub struct Key {
 }
 
 impl Key {
+    #[allow(dead_code)] // TODO
     pub fn create<K, P>(key: K, path: P) -> Result<Self>
     where
         K: IntoParam<HKEY>,
@@ -82,11 +81,13 @@ impl Key {
         }
     }
 
-    pub fn keys<'a>(&'a self) -> Result<Keys<'a>> {
+    #[allow(dead_code)] // TODO
+    pub fn keys(&self) -> Result<Keys<'_>> {
         Keys::new(&self.handle)
     }
 
-    pub fn values<'a>(&'a self) -> Result<Values<'a>> {
+    #[allow(dead_code)] // TODO
+    pub fn values(&self) -> Result<Values<'_>> {
         Values::new(&self.handle)
     }
 
@@ -94,6 +95,7 @@ impl Key {
     where
         P: IntoParam<PCWSTR> + Copy,
     {
+        const E_MORE_DATA: HRESULT = HRESULT((0x80070000u32 | ERROR_MORE_DATA.0) as i32);
         unsafe {
             let name: PCWSTR = name.into_param().abi();
             let mut data_type: REG_VALUE_TYPE = Default::default();
@@ -185,7 +187,7 @@ impl Data {
                 Some(Data::QWord(u64::from_le_bytes(buffer)))
             }
             REG_SZ | REG_EXPAND_SZ => unsafe {
-                if data.len() == 0 {
+                if data.is_empty() {
                     return Some(Data::String("".to_string()));
                 }
                 let data = PCWSTR::from_raw(data.as_ptr() as *const u16);
@@ -376,7 +378,7 @@ where
     K: IntoParam<PCWSTR>,
 {
     unsafe {
-        let path = PCWSTR::from(path.into_param().abi());
+        let path = path.into_param().abi();
         String::from_utf16_lossy(path.as_wide())
             .trim_end_matches('\\')
             .rsplit('\\')
