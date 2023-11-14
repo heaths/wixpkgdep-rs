@@ -6,12 +6,15 @@ use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    let dependents = wixpkgdep::check_dependents(
+    let Some(dependents) = wixpkgdep::check_dependents(
         args.provider_key,
         args.scope,
         Default::default(),
         &args.ignore,
-    )?;
+    )?
+    else {
+        return Ok(());
+    };
 
     for d in dependents.iter() {
         println!("{d}");
@@ -24,8 +27,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Checks for dependents of a provider key.
+///
+/// If any dependents are found they are printed and the process terminates with exit code 1.
 #[derive(Parser)]
-#[command(author, version, about = "Gets dependents of a provider key.")]
+#[command(author, version)]
 struct Args {
     /// The provider key to check for dependents.
     #[arg(short = 'k', long, value_name = "KEY")]
