@@ -128,8 +128,12 @@ impl Key {
             )
             .ok()?;
 
-            let name = String::from_utf16_lossy(name.into_param().abi().as_wide());
-            Value::from(&name, &data, data_type)
+            if !name.is_null() {
+                let name = String::from_utf16_lossy(name.as_wide());
+                return Value::from(Some(&name), &data, data_type);
+            }
+
+            Value::from(None, &data, data_type)
         }
     }
 }
@@ -150,16 +154,24 @@ impl Drop for Key {
 
 #[derive(Debug, PartialEq)]
 pub struct Value {
-    pub name: String,
+    pub name: Option<String>,
     pub data: Data,
 }
 
 impl Value {
-    fn from(name: &str, data: &[u8], data_type: REG_VALUE_TYPE) -> Option<Self> {
+    fn from(name: Option<&str>, data: &[u8], data_type: REG_VALUE_TYPE) -> Option<Self> {
         Some(Self {
-            name: name.to_string(),
+            name: name.map(|s| s.to_string()),
             data: Data::from(data, data_type)?,
         })
+    }
+
+    pub fn as_string(&self) -> Option<String> {
+        if let Data::String(s) = &self.data {
+            return Some(s.clone());
+        }
+
+        None
     }
 }
 
@@ -360,8 +372,12 @@ impl<'a> Iterator for Values<'a> {
 
             self.i += 1;
 
-            let name = String::from_utf16_lossy(name.as_wide());
-            Value::from(&name, &data, REG_VALUE_TYPE(data_type))
+            if !name.is_null() {
+                let name = String::from_utf16_lossy(name.as_wide());
+                return Value::from(Some(&name), &data, REG_VALUE_TYPE(data_type));
+            }
+
+            Value::from(None, &data, REG_VALUE_TYPE(data_type))
         }
     }
 

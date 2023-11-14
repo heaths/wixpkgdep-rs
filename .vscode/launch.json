@@ -15,7 +15,7 @@
         "--provider-key",
         "${input:providerKey}",
         "--scope",
-        "user"
+        "${input:scope}"
       ],
       "cwd": "${workspaceFolder}"
     }
@@ -26,6 +26,16 @@
       "type": "promptString",
       "description": "Provider key",
       "default": "CPython-3.11"
+    },
+    {
+      "id": "scope",
+      "type": "pickString",
+      "description": "Scope",
+      "default": "user",
+      "options": [
+        "user",
+        "machine"
+      ]
     }
   ]
 }
