@@ -37,20 +37,26 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Checks that there are no dependents registered for providers that are being uninstalled.
 pub fn check_dependents<K>(
     provider_key: K,
     scope: Scope,
-    _attributes: Attributes,
+    #[allow(unused_variables)] // Prevent future breaking change; not currently used.
+    attributes: Attributes,
     ignore: &Option<Vec<K>>,
-) -> Result<Vec<String>>
+) -> Result<Option<Vec<String>>>
 where
     K: AsRef<str> + PartialEq,
 {
-    let key = registry::Key::open::<HKEY, PCWSTR>(
+    // Failure to open a provider or Dependents key means no dependents.
+    let key = match registry::Key::open::<HKEY, PCWSTR>(
         scope.into(),
         w!("Software\\Classes\\Installer\\Dependencies"),
-    )
-    .map_err(map_windows_error)?;
+    ) {
+        Ok(k) => k,
+        Err(err) if err.code() == registry::E_FILE_NOT_FOUND => return Ok(None),
+        Err(err) => return Err(Error::RegistryError(err)),
+    };
 
     let provider_key: Vec<u16> = provider_key
         .as_ref()
@@ -58,25 +64,30 @@ where
         .chain(std::iter::once(0))
         .collect();
     let provider_key: PCWSTR = PCWSTR::from_raw(provider_key.as_ptr());
-    let key = key
-        .open_subkey::<PCWSTR>(provider_key)
-        .map_err(map_windows_error)?;
+    let key = match key.open_subkey::<PCWSTR>(provider_key) {
+        Ok(k) => k,
+        Err(err) if err.code() == registry::E_FILE_NOT_FOUND => return Ok(None),
+        Err(err) => return Err(Error::RegistryError(err)),
+    };
 
-    let key = key
-        .open_subkey::<PCWSTR>(w!("Dependents"))
-        .map_err(map_windows_error)?;
+    let key = match key.open_subkey::<PCWSTR>(w!("Dependents")) {
+        Ok(k) => k,
+        Err(err) if err.code() == registry::E_FILE_NOT_FOUND => return Ok(None),
+        Err(err) => return Err(Error::RegistryError(err)),
+    };
 
-    Ok(key
-        .keys()?
-        .filter_map(|k| unsafe {
-            if let Some(ignore) = ignore {
-                if ignore.contains(std::mem::transmute(&k.name)) {
-                    return None;
+    Ok(Some(
+        key.keys()?
+            .filter_map(|k| unsafe {
+                if let Some(ignore) = ignore {
+                    if ignore.contains(std::mem::transmute(&k.name)) {
+                        return None;
+                    }
                 }
-            }
-            Some(k.name.clone())
-        })
-        .collect())
+                Some(k.name.clone())
+            })
+            .collect(),
+    ))
 }
 
 impl Display for Error {
@@ -123,12 +134,5 @@ impl From<Scope> for windows::Win32::System::Registry::HKEY {
             Scope::User => registry::HKEY_CURRENT_USER,
             Scope::Machine => registry::HKEY_LOCAL_MACHINE,
         }
-    }
-}
-
-fn map_windows_error(err: windows::core::Error) -> Error {
-    match err.code() {
-        registry::E_FILE_NOT_FOUND => Error::NotFound,
-        _ => Error::RegistryError(err),
     }
 }
