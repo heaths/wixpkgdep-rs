@@ -10,6 +10,23 @@ use windows::{
 
 mod registry;
 
+#[derive(Debug, Default, Clone)]
+pub struct Provider {
+    /// Provider key that uniquely identifies the provider.
+    key: String,
+
+    /// Optional identifier of the package for an external system e.g., a ProductCode for a Windows Installer package.
+    #[allow(dead_code)] // TODO
+    id: Option<String>,
+
+    /// Optional display name of the provider.
+    name: Option<String>,
+
+    /// Optional version of the provider.
+    #[allow(dead_code)] // TODO
+    version: Option<String>, // TODO: Replace with Version struct and support REG_QWORD, REG_SZ.
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Scope {
     User,
@@ -37,6 +54,30 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Gets information about a provider.
+pub fn get_provider<K>(provider_key: K, scope: Scope) -> Result<Provider>
+where
+    K: AsRef<str>,
+{
+    let key = registry::Key::open::<HKEY, PCWSTR>(
+        scope.into(),
+        w!("Software\\Classes\\Installer\\Dependencies"),
+    )
+    .map_err(map_registry_error)?;
+
+    let _provider_key: Vec<u16> = provider_key
+        .as_ref()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let _provider_key: PCWSTR = PCWSTR::from_raw(_provider_key.as_ptr());
+    let key = key
+        .open_subkey::<PCWSTR>(_provider_key)
+        .map_err(map_registry_error)?;
+
+    Ok(Provider::from(provider_key, &key))
+}
+
 /// Checks that there are no dependents registered for providers that are being uninstalled.
 pub fn check_dependents<K>(
     provider_key: K,
@@ -44,7 +85,7 @@ pub fn check_dependents<K>(
     #[allow(unused_variables)] // Prevent future breaking change; not currently used.
     attributes: Attributes,
     ignore: &Option<Vec<K>>,
-) -> Result<Option<Vec<String>>>
+) -> Result<Option<Vec<Provider>>>
 where
     K: AsRef<str> + PartialEq,
 {
@@ -84,19 +125,41 @@ where
                         return None;
                     }
                 }
-                Some(k.name.clone())
+
+                // BUGBUG: Should we check that the provider actually exists in case it didn't clean up during uninstall or was that meant for permanent packages?
+                if let Ok(p) = get_provider(&k.name, scope) {
+                    return Some(p);
+                }
+
+                Some(Provider {
+                    key: k.name.clone(),
+                    ..Default::default()
+                })
             })
             .collect(),
     ))
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::NotFound => write!(f, "not found"),
-            Error::NotSupported => write!(f, "not supported"),
-            Error::RegistryError(err) => write!(f, "{}", err),
+impl Provider {
+    fn from<K>(provider_key: K, key: &registry::Key) -> Self
+    where
+        K: AsRef<str>,
+    {
+        Provider {
+            key: provider_key.as_ref().to_string(),
+            id: key.value(PCWSTR::null()).and_then(|v| v.as_string()),
+            name: key.value(w!("DisplayName")).and_then(|v| v.as_string()),
+            version: key.value(w!("Version")).and_then(|v| v.as_string()),
         }
+    }
+}
+
+impl Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = &self.name {
+            return write!(f, "{} ({})", name, &self.key);
+        }
+        write!(f, "{}", &self.key)
     }
 }
 
@@ -105,6 +168,16 @@ impl Display for Scope {
         match self {
             Scope::User => write!(f, "user"),
             Scope::Machine => write!(f, "machine"),
+        }
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::NotFound => write!(f, "not found"),
+            Error::NotSupported => write!(f, "not supported"),
+            Error::RegistryError(err) => write!(f, "{}", err),
         }
     }
 }
@@ -134,5 +207,12 @@ impl From<Scope> for windows::Win32::System::Registry::HKEY {
             Scope::User => registry::HKEY_CURRENT_USER,
             Scope::Machine => registry::HKEY_LOCAL_MACHINE,
         }
+    }
+}
+
+fn map_registry_error(err: windows::core::Error) -> Error {
+    match err.code() {
+        registry::E_FILE_NOT_FOUND => Error::NotFound,
+        _ => Error::RegistryError(err),
     }
 }
