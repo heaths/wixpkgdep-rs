@@ -1,34 +1,24 @@
 // Copyright 2023 Heath Stewart.
 // Licensed under the MIT License. See LICENSE.txt in the project root for license information.
 
-use std::{fmt::Display, str::FromStr};
+use std::{
+    collections::HashSet,
+    fmt::Display,
+    ops::{BitAnd, BitOr},
+    str::FromStr,
+};
 
 use windows::{
     core::{w, PCWSTR},
     Win32::System::Registry::HKEY,
 };
 
+mod provider;
 mod registry;
 mod version;
 
+pub use provider::Provider;
 pub use version::Version;
-
-#[derive(Debug, Default, Clone)]
-pub struct Provider {
-    /// Provider key that uniquely identifies the provider.
-    key: String,
-
-    /// Optional identifier of the package for an external system e.g., a ProductCode for a Windows Installer package.
-    #[allow(dead_code)] // TODO
-    id: Option<String>,
-
-    /// Optional display name of the provider.
-    name: Option<String>,
-
-    /// Optional version of the provider.
-    #[allow(dead_code)] // TODO
-    version: Option<Version>,
-}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Scope {
@@ -39,7 +29,7 @@ pub enum Scope {
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
-#[repr(C)]
+#[repr(u32)]
 pub enum Attributes {
     #[default]
     None,
@@ -58,23 +48,15 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Gets information about a provider.
-pub fn get_provider<K>(provider_key: K, scope: Scope) -> Result<Provider>
-where
-    K: AsRef<str>,
-{
-    let key = registry::Key::open::<HKEY, PCWSTR>(
-        scope.into(),
-        w!("Software\\Classes\\Installer\\Dependencies"),
-    )
-    .map_err(map_registry_error)?;
+const ROOT_KEY: PCWSTR = w!("Software\\Classes\\Installer\\Dependencies");
+const DEPENDENTS_KEY: PCWSTR = w!("Dependents");
 
-    let _provider_key: Vec<u16> = provider_key
-        .as_ref()
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let _provider_key: PCWSTR = PCWSTR::from_raw(_provider_key.as_ptr());
+/// Gets information about a provider.
+pub fn get_provider(provider_key: &str, scope: Scope) -> Result<Provider> {
+    let key =
+        registry::Key::open::<HKEY, PCWSTR>(scope.into(), ROOT_KEY).map_err(map_registry_error)?;
+
+    let _provider_key = to_pcwstr(provider_key);
     let key = key
         .open_subkey::<PCWSTR>(_provider_key)
         .map_err(map_registry_error)?;
@@ -82,50 +64,105 @@ where
     Ok(Provider::from(provider_key, &key))
 }
 
+/// Checks that the dependency is registered and within the requested version range.
+pub fn check_dependencies(
+    provider_key: &str,
+    scope: Scope,
+    min_version: Option<Version>,
+    max_version: Option<Version>,
+    attributes: Option<Attributes>,
+    dependencies: &mut HashSet<Provider>,
+) -> Result<()> {
+    let key = registry::Key::open::<HKEY, PCWSTR>(scope.into(), ROOT_KEY)
+        .map_err(Error::RegistryError)?;
+
+    // If the key or its Version value is missing, add it to the set of dependencies, and return NotFound.
+    let _provider_key = to_pcwstr(provider_key);
+    let key = match key
+        .open_subkey::<PCWSTR>(_provider_key)
+        .map_err(map_registry_error)
+    {
+        Ok(k) => {
+            if key.value(w!("Version")).is_none() {
+                // We only have the provider key at this time.
+                dependencies.insert(Provider::new(provider_key));
+                return Err(Error::NotFound);
+            }
+            k
+        }
+        Err(Error::NotFound) => {
+            // We only have the provider key at this time.
+            dependencies.insert(Provider::new(provider_key));
+            return Err(Error::NotFound);
+        }
+        Err(err) => return Err(err),
+    };
+
+    // Since the provider and Version were found, check the version range requirements.
+    let provider = Provider::from(provider_key, &key);
+    if let Some(min_version) = min_version {
+        let allow_equal = (attributes.unwrap_or_default() & Attributes::MinVersionInclusive)
+            == Attributes::MinVersionInclusive as u32;
+
+        let version = provider.version.unwrap();
+        if !(allow_equal && min_version <= version || min_version < version) {
+            dependencies.insert(provider);
+            return Err(Error::NotFound);
+        }
+    }
+
+    if let Some(max_version) = max_version {
+        let allow_equal = (attributes.unwrap_or_default() & Attributes::MaxVersionInclusive)
+            == Attributes::MaxVersionInclusive as u32;
+
+        let version = provider.version.unwrap();
+        if !(allow_equal && version <= max_version || version < max_version) {
+            dependencies.insert(provider);
+            return Err(Error::NotFound);
+        }
+    }
+
+    Ok(())
+}
+
 /// Checks that there are no dependents registered for providers that are being uninstalled.
-pub fn check_dependents<K>(
-    provider_key: K,
+pub fn check_dependents(
+    provider_key: &str,
     scope: Scope,
     #[allow(unused_variables)] // Prevent future breaking change; not currently used.
-    attributes: Attributes,
-    ignore: &Option<Vec<K>>,
-) -> Result<Option<Vec<Provider>>>
-where
-    K: AsRef<str> + PartialEq,
-{
-    // Failure to open a provider or Dependents key means no dependents.
-    let key = match registry::Key::open::<HKEY, PCWSTR>(
-        scope.into(),
-        w!("Software\\Classes\\Installer\\Dependencies"),
-    ) {
-        Ok(k) => k,
-        Err(err) if err.code() == registry::E_FILE_NOT_FOUND => return Ok(None),
-        Err(err) => return Err(Error::RegistryError(err)),
-    };
+    attributes: Option<Attributes>,
+    ignore: Option<&HashSet<String>>,
+) -> Result<Option<Vec<Provider>>> {
+    // Failure to open a provider or its Dependents key means no dependents.
+    let key = match registry::Key::open::<HKEY, PCWSTR>(scope.into(), ROOT_KEY)
+        .map_err(map_registry_error)
+    {
+        Err(Error::NotFound) => return Ok(None),
+        err => err,
+    }?;
 
-    let provider_key: Vec<u16> = provider_key
-        .as_ref()
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let provider_key: PCWSTR = PCWSTR::from_raw(provider_key.as_ptr());
-    let key = match key.open_subkey::<PCWSTR>(provider_key) {
-        Ok(k) => k,
-        Err(err) if err.code() == registry::E_FILE_NOT_FOUND => return Ok(None),
-        Err(err) => return Err(Error::RegistryError(err)),
-    };
+    let provider_key = to_pcwstr(provider_key);
+    let key = match key
+        .open_subkey::<PCWSTR>(provider_key)
+        .map_err(map_registry_error)
+    {
+        Err(Error::NotFound) => return Ok(None),
+        err => err,
+    }?;
 
-    let key = match key.open_subkey::<PCWSTR>(w!("Dependents")) {
-        Ok(k) => k,
-        Err(err) if err.code() == registry::E_FILE_NOT_FOUND => return Ok(None),
-        Err(err) => return Err(Error::RegistryError(err)),
-    };
+    let key = match key
+        .open_subkey::<PCWSTR>(DEPENDENTS_KEY)
+        .map_err(map_registry_error)
+    {
+        Err(Error::NotFound) => return Ok(None),
+        err => err,
+    }?;
 
     Ok(Some(
         key.keys()?
-            .filter_map(|k| unsafe {
+            .filter_map(|k| {
                 if let Some(ignore) = ignore {
-                    if ignore.contains(std::mem::transmute(&k.name)) {
+                    if ignore.contains(&k.name) {
                         return None;
                     }
                 }
@@ -135,35 +172,24 @@ where
                     return Some(p);
                 }
 
-                Some(Provider {
-                    key: k.name.clone(),
-                    ..Default::default()
-                })
+                Some(Provider::new(&k.name))
             })
             .collect(),
     ))
 }
 
-impl Provider {
-    fn from<K>(provider_key: K, key: &registry::Key) -> Self
-    where
-        K: AsRef<str>,
-    {
-        Provider {
-            key: provider_key.as_ref().to_string(),
-            id: key.value(PCWSTR::null()).and_then(|v| v.as_string()),
-            name: key.value(w!("DisplayName")).and_then(|v| v.as_string()),
-            version: key.value(w!("Version")).and_then(|v| v.as_version()),
-        }
+impl BitAnd for Attributes {
+    type Output = u32;
+    // cspell:ignore bitand
+    fn bitand(self, rhs: Self) -> Self::Output {
+        (self as u32) & (rhs as u32)
     }
 }
 
-impl Display for Provider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(name) = &self.name {
-            return write!(f, "{} ({})", name, &self.key);
-        }
-        write!(f, "{}", &self.key)
+impl BitOr for Attributes {
+    type Output = u32;
+    fn bitor(self, rhs: Self) -> Self::Output {
+        (self as u32) | (rhs as u32)
     }
 }
 
@@ -215,9 +241,26 @@ impl From<Scope> for windows::Win32::System::Registry::HKEY {
     }
 }
 
+fn to_pcwstr(value: &str) -> PCWSTR {
+    let value: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+    PCWSTR::from_raw(value.as_ptr())
+}
+
 fn map_registry_error(err: windows::core::Error) -> Error {
     match err.code() {
         registry::E_FILE_NOT_FOUND => Error::NotFound,
         _ => Error::RegistryError(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_pcwstr() {
+        let value = to_pcwstr("test");
+        let (_, value, _) = unsafe { value.as_wide().align_to::<u8>() };
+        assert_eq!(value, b"t\0e\0s\0t\0");
     }
 }

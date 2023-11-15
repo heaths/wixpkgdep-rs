@@ -406,6 +406,7 @@ where
         let path = path.into_param().abi();
         String::from_utf16_lossy(path.as_wide())
             .trim_end_matches('\\')
+            // cspell:ignore rsplit
             .rsplit('\\')
             .take(1)
             .last()
