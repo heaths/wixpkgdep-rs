@@ -2,15 +2,15 @@
 // Licensed under the MIT License. See LICENSE.txt in the project root for license information.
 
 use clap::Parser;
-use std::error::Error;
+use std::{collections::HashSet, error::Error};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let Some(dependents) = wixpkgdep::check_dependents(
-        args.provider_key,
+        &args.provider_key,
         args.scope,
         Default::default(),
-        &args.ignore,
+        args.ignored().as_ref(),
     )?
     else {
         return Ok(());
@@ -44,4 +44,12 @@ struct Args {
     /// Dependents to ignore.
     #[arg(long, value_name = "DEPENDENCIES")]
     ignore: Option<Vec<String>>,
+}
+
+impl Args {
+    fn ignored(&self) -> Option<HashSet<String>> {
+        self.ignore
+            .as_ref()
+            .map(|v| HashSet::from_iter(v.iter().cloned()))
+    }
 }

@@ -70,19 +70,7 @@ impl TryFrom<String> for Version {
     type Error = crate::Error;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        let value = value.trim_start_matches(|c| c == 'v' || c == 'V');
-        let mut fields = [0u16; 4];
-
-        for (i, part) in value.split('.').enumerate() {
-            if i >= fields.len() {
-                return Err(Error::Format);
-            }
-
-            let field = part.parse::<u16>().map_err(|_| Error::Format)?;
-            fields[i] = field;
-        }
-
-        Ok(Version::from(fields))
+        Version::try_from(value.as_ref())
     }
 }
 
@@ -136,6 +124,39 @@ mod tests {
         assert!(Version::from([1, 1, 0, 0]) > Version::from([1, 0, 0, 0]));
         assert!(Version::from([1, 2, 0, 0]) <= Version::from([1, 2, 3, 0]));
         assert!(Version::from([1, 2, 3, 0]) >= Version::from([1, 2, 0, 0]));
+    }
+
+    #[test]
+    fn version_try_from_str_ok() {
+        assert_eq!(Version::try_from("1").unwrap(), Version::from([1, 0, 0, 0]));
+        assert_eq!(
+            Version::try_from("1.2").unwrap(),
+            Version::from([1, 2, 0, 0])
+        );
+        assert_eq!(
+            Version::try_from("1.2.3").unwrap(),
+            Version::from([1, 2, 3, 0])
+        );
+        assert_eq!(
+            Version::try_from("1.2.3.4").unwrap(),
+            Version::from([1, 2, 3, 4])
+        );
+    }
+
+    #[test]
+    fn version_try_from_str_err_format() {
+        assert_eq!(
+            Version::try_from("test".to_string()).unwrap_err(),
+            Error::Format
+        );
+    }
+
+    #[test]
+    fn version_try_from_str_err_too_many() {
+        assert_eq!(
+            Version::try_from("1.2.3.4.5".to_string()).unwrap_err(),
+            Error::Format
+        );
     }
 
     #[test]
