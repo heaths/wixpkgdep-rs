@@ -9,6 +9,9 @@ use windows::{
 };
 
 mod registry;
+mod version;
+
+pub use version::Version;
 
 #[derive(Debug, Default, Clone)]
 pub struct Provider {
@@ -24,7 +27,7 @@ pub struct Provider {
 
     /// Optional version of the provider.
     #[allow(dead_code)] // TODO
-    version: Option<String>, // TODO: Replace with Version struct and support REG_QWORD, REG_SZ.
+    version: Option<Version>,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -47,6 +50,7 @@ pub enum Attributes {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
+    Format,
     NotFound,
     NotSupported,
     RegistryError(windows::core::Error),
@@ -149,7 +153,7 @@ impl Provider {
             key: provider_key.as_ref().to_string(),
             id: key.value(PCWSTR::null()).and_then(|v| v.as_string()),
             name: key.value(w!("DisplayName")).and_then(|v| v.as_string()),
-            version: key.value(w!("Version")).and_then(|v| v.as_string()),
+            version: key.value(w!("Version")).and_then(|v| v.as_version()),
         }
     }
 }
@@ -175,6 +179,7 @@ impl Display for Scope {
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Error::Format => write!(f, "invalid format"),
             Error::NotFound => write!(f, "not found"),
             Error::NotSupported => write!(f, "not supported"),
             Error::RegistryError(err) => write!(f, "{}", err),

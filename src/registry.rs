@@ -11,6 +11,7 @@ use windows::{
     },
 };
 
+use crate::version::Version;
 pub use Registry::HKEY_CURRENT_USER;
 pub use Registry::HKEY_LOCAL_MACHINE;
 
@@ -166,12 +167,20 @@ impl Value {
         })
     }
 
-    pub fn as_string(&self) -> Option<String> {
+    pub(crate) fn as_string(&self) -> Option<String> {
         if let Data::String(s) = &self.data {
             return Some(s.clone());
         }
 
         None
+    }
+
+    pub(crate) fn as_version(&self) -> Option<Version> {
+        match &self.data {
+            Data::String(s) => Version::try_from(s.as_str()).ok(),
+            Data::QWord(d) => Some(Version::from(*d)),
+            _ => None,
+        }
     }
 }
 
