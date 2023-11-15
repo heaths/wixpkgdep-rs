@@ -51,14 +51,14 @@ impl Display for Provider {
 
 impl PartialEq for Provider {
     fn eq(&self, other: &Self) -> bool {
-        self.key.eq(&other.key)
+        self.key.to_uppercase().eq(&other.key.to_uppercase())
     }
 }
 
 impl hash::Hash for Provider {
     // cspell:ignore Hasher
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.key.hash(state)
+        self.key.to_uppercase().hash(state)
     }
 }
 
@@ -74,6 +74,12 @@ mod tests {
     fn provider_equivalency() {
         assert_eq!(Provider::new("test"), Provider::new("test"));
         assert_eq!(hash(&Provider::new("test")), hash(&Provider::new("test")));
+    }
+
+    #[test]
+    fn provider_equivalency_case_insensitive() {
+        assert_eq!(Provider::new("test"), Provider::new("TEST"));
+        assert_eq!(hash(&Provider::new("test")), hash(&Provider::new("TEST")));
     }
 
     #[test]
