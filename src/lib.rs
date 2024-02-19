@@ -85,12 +85,15 @@ where
 
     // If the key or its Version value is missing, add it to the set of dependencies, and return NotFound.
     let _provider_key = to_pcwstr(provider_key.as_ref());
+    let version: Version;
     let key = match key
         .open_subkey::<PCWSTR>(_provider_key)
         .map_err(map_registry_error)
     {
         Ok(k) => {
-            if key.value(w!("Version")).is_none() {
+            if let Some(_version) = key.value(w!("Version")).ok().and_then(|v| v.as_version()) {
+                version = _version;
+            } else {
                 // We only have the provider key at this time.
                 dependencies.insert(Provider::new(provider_key));
                 return Err(Error::NotFound);
@@ -106,12 +109,11 @@ where
     };
 
     // Since the provider and Version were found, check the version range requirements.
-    let provider = Provider::from(provider_key, &key);
+    let provider = Provider::from_requires_display_name(provider_key, &key)?;
     if let Some(min_version) = min_version {
         let allow_equal = (attributes.unwrap_or_default() & Attributes::MinVersionInclusive)
             == Attributes::MinVersionInclusive as u32;
 
-        let version = provider.version.unwrap();
         if !(allow_equal && min_version <= version || min_version < version) {
             dependencies.insert(provider);
             return Err(Error::NotFound);
@@ -122,7 +124,6 @@ where
         let allow_equal = (attributes.unwrap_or_default() & Attributes::MaxVersionInclusive)
             == Attributes::MaxVersionInclusive as u32;
 
-        let version = provider.version.unwrap();
         if !(allow_equal && version <= max_version || version < max_version) {
             dependencies.insert(provider);
             return Err(Error::NotFound);
