@@ -6,7 +6,7 @@ use std::fmt::Display;
 use windows::{
     core::{IntoParam, Result, HRESULT, PCWSTR, PWSTR},
     Win32::{
-        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA},
+        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_INVALID_DATA, ERROR_MORE_DATA},
         System::Registry::{self, *},
     },
 };
@@ -16,6 +16,7 @@ pub use Registry::HKEY_CURRENT_USER;
 pub use Registry::HKEY_LOCAL_MACHINE;
 
 pub const E_FILE_NOT_FOUND: HRESULT = HRESULT((0x80070000u32 | ERROR_FILE_NOT_FOUND.0) as i32);
+const E_INVALID_DATA: HRESULT = HRESULT((0x80070000u32 | ERROR_INVALID_DATA.0) as i32);
 
 #[derive(Debug)]
 pub struct Key {
@@ -92,7 +93,7 @@ impl Key {
         Values::new(&self.handle)
     }
 
-    pub fn value<P>(&self, name: P) -> Option<Value>
+    pub fn value<P>(&self, name: P) -> Result<Value>
     where
         P: IntoParam<PCWSTR> + Copy,
     {
@@ -113,7 +114,7 @@ impl Key {
             ) {
                 match err.code() {
                     E_MORE_DATA => {}
-                    _ => return None,
+                    _ => return Err(err),
                 }
             }
 
@@ -126,15 +127,15 @@ impl Key {
                 None,
                 Some(data.as_mut_ptr() as *mut std::ffi::c_void),
                 Some(&mut data_size),
-            )
-            .ok()?;
+            )?;
 
             if !name.is_null() {
                 let name = String::from_utf16_lossy(name.as_wide());
-                return Value::from(Some(&name), &data, data_type);
+                return Value::from(Some(&name), &data, data_type)
+                    .ok_or_else(|| E_INVALID_DATA.into());
             }
 
-            Value::from(None, &data, data_type)
+            Value::from(None, &data, data_type).ok_or_else(|| E_INVALID_DATA.into())
         }
     }
 }

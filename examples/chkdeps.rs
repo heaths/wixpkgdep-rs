@@ -4,11 +4,14 @@
 use clap::Parser;
 use std::{collections::HashSet, error::Error};
 
+mod common;
+use common::Scope;
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let Some(dependents) = wixpkgdep::check_dependents(
         &args.provider_key,
-        args.scope,
+        args.scope.into(),
         Default::default(),
         args.ignored().as_ref(),
     )?
@@ -39,7 +42,7 @@ struct Args {
 
     /// The scope under which to check for dependents.
     #[arg(long, value_parser, default_value_t)]
-    scope: wixpkgdep::Scope,
+    scope: Scope,
 
     /// Dependents to ignore.
     #[arg(long, value_name = "DEPENDENCIES")]

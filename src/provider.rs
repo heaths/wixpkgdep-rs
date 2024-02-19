@@ -8,6 +8,31 @@ use std::{collections::HashSet, fmt::Display, hash};
 use windows::core::{w, PCWSTR};
 
 #[derive(Debug, Default, Clone, Eq)]
+pub struct Dependency {
+    /// Provider key that uniquely identifies the dependency.
+    pub key: String,
+}
+
+impl Display for Dependency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", &self.key)
+    }
+}
+
+impl PartialEq for Dependency {
+    fn eq(&self, other: &Self) -> bool {
+        self.key.to_uppercase().eq(&other.key.to_uppercase())
+    }
+}
+
+impl hash::Hash for Dependency {
+    // cspell:ignore Hasher
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.key.to_uppercase().hash(state)
+    }
+}
+
+#[derive(Debug, Default, Clone, Eq)]
 pub struct Provider {
     /// Provider key that uniquely identifies the provider.
     pub key: String,
@@ -35,10 +60,25 @@ impl Provider {
         // Equivalent to deputil:DepGetProviderInformation.
         Provider {
             key: provider_key.into(),
-            id: key.value(PCWSTR::null()).and_then(|v| v.as_string()),
-            name: key.value(w!("DisplayName")).and_then(|v| v.as_string()),
-            version: key.value(w!("Version")).and_then(|v| v.as_version()),
+            id: key.value(PCWSTR::null()).ok().and_then(|v| v.as_string()),
+            name: key
+                .value(w!("DisplayName"))
+                .ok()
+                .and_then(|v| v.as_string()),
+            version: key.value(w!("Version")).ok().and_then(|v| v.as_version()),
         }
+    }
+
+    pub(crate) fn from_requires_display_name(
+        provider_key: impl Into<String>,
+        key: &Key,
+    ) -> Result<Self> {
+        Ok(Provider {
+            key: provider_key.into(),
+            name: key.value(w!("DisplayName"))?.as_string(),
+            id: key.value(PCWSTR::null()).ok().and_then(|v| v.as_string()),
+            version: key.value(w!("Version")).ok().and_then(|v| v.as_version()),
+        })
     }
 
     /// Checks that there are no dependents registered for the current provider that are being uninstalled.
