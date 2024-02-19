@@ -3,7 +3,8 @@
 
 use crate::registry::Key;
 use crate::version::Version;
-use std::{fmt::Display, hash};
+use crate::{Attributes, Result, Scope};
+use std::{collections::HashSet, fmt::Display, hash};
 use windows::core::{w, PCWSTR};
 
 #[derive(Debug, Default, Clone, Eq)]
@@ -23,20 +24,32 @@ pub struct Provider {
 }
 
 impl Provider {
-    pub(crate) fn new(provider_key: &str) -> Self {
+    pub(crate) fn new(provider_key: impl Into<String>) -> Self {
         Provider {
-            key: provider_key.to_string(),
+            key: provider_key.into(),
             ..Default::default()
         }
     }
 
-    pub(crate) fn from(provider_key: &str, key: &Key) -> Self {
+    pub(crate) fn from(provider_key: impl Into<String>, key: &Key) -> Self {
+        // Equivalent to deputil:DepGetProviderInformation.
         Provider {
-            key: provider_key.to_string(),
+            key: provider_key.into(),
             id: key.value(PCWSTR::null()).and_then(|v| v.as_string()),
             name: key.value(w!("DisplayName")).and_then(|v| v.as_string()),
             version: key.value(w!("Version")).and_then(|v| v.as_version()),
         }
+    }
+
+    /// Checks that there are no dependents registered for the current provider that are being uninstalled.
+    pub fn check_dependents<K>(
+        &self,
+        scope: Scope,
+        #[allow(unused_variables)] // Prevent future breaking change; not currently used.
+        attributes: Option<Attributes>,
+        ignore: Option<&HashSet<String>>,
+    ) -> Result<Option<Vec<Provider>>> {
+        crate::check_dependents(&self.key, scope, attributes, ignore)
     }
 }
 
