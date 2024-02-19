@@ -52,11 +52,14 @@ const ROOT_KEY: PCWSTR = w!("Software\\Classes\\Installer\\Dependencies");
 const DEPENDENTS_KEY: PCWSTR = w!("Dependents");
 
 /// Gets information about a provider.
-pub fn get_provider(provider_key: &str, scope: Scope) -> Result<Provider> {
+pub fn get_provider<K>(provider_key: K, scope: Scope) -> Result<Provider>
+where
+    K: AsRef<str> + Into<String>,
+{
     let key =
         registry::Key::open::<HKEY, PCWSTR>(scope.into(), ROOT_KEY).map_err(map_registry_error)?;
 
-    let _provider_key = to_pcwstr(provider_key);
+    let _provider_key = to_pcwstr(provider_key.as_ref());
     let key = key
         .open_subkey::<PCWSTR>(_provider_key)
         .map_err(map_registry_error)?;
@@ -65,19 +68,23 @@ pub fn get_provider(provider_key: &str, scope: Scope) -> Result<Provider> {
 }
 
 /// Checks that the dependency is registered and within the requested version range.
-pub fn check_dependencies(
-    provider_key: &str,
+pub fn check_dependencies<K>(
+    provider_key: K,
     scope: Scope,
     min_version: Option<Version>,
     max_version: Option<Version>,
     attributes: Option<Attributes>,
     dependencies: &mut HashSet<Provider>,
-) -> Result<()> {
+) -> Result<()>
+where
+    K: AsRef<str> + Into<String>,
+{
+    // Equivalent to deputil:DepCheckDependency.
     let key = registry::Key::open::<HKEY, PCWSTR>(scope.into(), ROOT_KEY)
         .map_err(Error::RegistryError)?;
 
     // If the key or its Version value is missing, add it to the set of dependencies, and return NotFound.
-    let _provider_key = to_pcwstr(provider_key);
+    let _provider_key = to_pcwstr(provider_key.as_ref());
     let key = match key
         .open_subkey::<PCWSTR>(_provider_key)
         .map_err(map_registry_error)
@@ -126,13 +133,18 @@ pub fn check_dependencies(
 }
 
 /// Checks that there are no dependents registered for providers that are being uninstalled.
-pub fn check_dependents(
-    provider_key: &str,
+pub fn check_dependents<K>(
+    provider_key: K,
     scope: Scope,
     #[allow(unused_variables)] // Prevent future breaking change; not currently used.
     attributes: Option<Attributes>,
     ignore: Option<&HashSet<String>>,
-) -> Result<Option<Vec<Provider>>> {
+) -> Result<Option<Vec<Provider>>>
+where
+    K: AsRef<str>,
+{
+    // Equivalent to deputil:DepCheckDependents.
+
     // Failure to open a provider or its Dependents key means no dependents.
     let key = match registry::Key::open::<HKEY, PCWSTR>(scope.into(), ROOT_KEY)
         .map_err(map_registry_error)
@@ -241,8 +253,12 @@ impl From<Scope> for windows::Win32::System::Registry::HKEY {
     }
 }
 
-fn to_pcwstr(value: &str) -> PCWSTR {
-    let value: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+fn to_pcwstr(value: impl AsRef<str>) -> PCWSTR {
+    let value: Vec<u16> = value
+        .as_ref()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     PCWSTR::from_raw(value.as_ptr())
 }
 
