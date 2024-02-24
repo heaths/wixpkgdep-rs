@@ -11,6 +11,7 @@ use windows::{
     },
 };
 
+use crate::error::Error;
 use crate::version::Version;
 pub use Registry::HKEY_CURRENT_USER;
 pub use Registry::HKEY_LOCAL_MACHINE;
@@ -27,7 +28,6 @@ pub struct Key {
 }
 
 impl Key {
-    #[allow(dead_code)] // TODO
     pub fn create<K, P>(key: K, path: P) -> Result<Self>
     where
         K: IntoParam<HKEY>,
@@ -66,6 +66,23 @@ impl Key {
         }
     }
 
+    pub fn create_subkey<P>(&self, path: P) -> Result<Self>
+    where
+        P: IntoParam<PCWSTR>,
+    {
+        unsafe {
+            let mut handle: HKEY = Default::default();
+
+            let path: PCWSTR = path.into_param().abi();
+            RegCreateKeyW(self.handle, path, &mut handle)?;
+            Ok(Key {
+                handle,
+                access: self.access,
+                name: get_name(path),
+            })
+        }
+    }
+
     pub fn open_subkey<P>(&self, path: P) -> Result<Self>
     where
         P: IntoParam<PCWSTR>,
@@ -83,12 +100,11 @@ impl Key {
         }
     }
 
-    #[allow(dead_code)] // TODO
     pub fn keys(&self) -> Result<Keys<'_>> {
         Keys::new(&self.handle)
     }
 
-    #[allow(dead_code)] // TODO
+    #[allow(dead_code)]
     pub fn values(&self) -> Result<Values<'_>> {
         Values::new(&self.handle)
     }
@@ -138,6 +154,16 @@ impl Key {
             Value::from(None, &data, data_type).ok_or_else(|| E_INVALID_DATA.into())
         }
     }
+
+    pub fn set_value(&self, name: Option<PCWSTR>, value: Data) -> Result<()> {
+        let (data_type, data) = value.into();
+        unsafe {
+            let name = name.unwrap_or_else(PCWSTR::null);
+            RegSetValueExW(self.handle, name, 0u32, data_type, Some(data.as_ref()))?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Display for Key {
@@ -168,19 +194,19 @@ impl Value {
         })
     }
 
-    pub(crate) fn as_string(&self) -> Option<String> {
+    pub(crate) fn to_string(&self) -> crate::Result<String> {
         if let Data::String(s) = &self.data {
-            return Some(s.clone());
+            return Ok(s.clone());
         }
 
-        None
+        Err(Error::Format)
     }
 
-    pub(crate) fn as_version(&self) -> Option<Version> {
+    pub(crate) fn to_version(&self) -> crate::Result<Version> {
         match &self.data {
-            Data::String(s) => Version::try_from(s.as_str()).ok(),
-            Data::QWord(d) => Some(Version::from(*d)),
-            _ => None,
+            Data::String(s) => Version::try_from(s.as_str()),
+            Data::QWord(d) => Ok(Version::from(*d)),
+            _ => Err(Error::Format),
         }
     }
 }
@@ -230,6 +256,35 @@ impl Data {
                 Some(Data::MultiString(data))
             },
             _ => None,
+        }
+    }
+
+    fn into(self) -> (REG_VALUE_TYPE, Vec<u8>) {
+        match self {
+            Data::Binary(v) => (REG_BINARY, v),
+            Data::DWord(v) => (REG_DWORD, v.to_le_bytes().into()),
+            Data::MultiString(v) => {
+                let data = v
+                    .into_iter()
+                    .flat_map(|v| {
+                        v.encode_utf16()
+                            .chain(std::iter::once(0u16))
+                            .flat_map(|v| v.to_le_bytes())
+                            .collect::<Vec<u8>>()
+                    })
+                    .chain(vec![0u8; 4])
+                    .collect();
+                (REG_MULTI_SZ, data)
+            }
+            Data::QWord(v) => (REG_QWORD, v.to_le_bytes().into()),
+            Data::String(v) => {
+                let data = v
+                    .encode_utf16()
+                    .chain(std::iter::once(0u16))
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect();
+                (REG_SZ, data)
+            }
         }
     }
 }
@@ -396,6 +451,13 @@ impl<'a> Iterator for Values<'a> {
         Self: Sized,
     {
         self.count as usize
+    }
+}
+
+pub(crate) fn map_registry_error(err: windows::core::Error) -> Error {
+    match err.code() {
+        E_FILE_NOT_FOUND => Error::NotFound,
+        _ => Error::RegistryError(err),
     }
 }
 
