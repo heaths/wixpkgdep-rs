@@ -1,16 +1,25 @@
 // Copyright 2023 Heath Stewart.
 // Licensed under the MIT License. See LICENSE.txt in the project root for license information.
 
-use crate::registry::Key;
+use crate::registry::{Data, Key};
 use crate::version::Version;
 use crate::{Attributes, Result, Scope};
 use std::{collections::HashSet, fmt::Display, hash};
 use windows::core::{w, PCWSTR};
+use windows::Win32::System::Registry::HKEY;
 
 #[derive(Debug, Default, Clone, Eq)]
 pub struct Dependency {
     /// Provider key that uniquely identifies the dependency.
     pub key: String,
+}
+
+impl Dependency {
+    pub(crate) fn new(provider_key: impl Into<String>) -> Self {
+        Dependency {
+            key: provider_key.into(),
+        }
+    }
 }
 
 impl Display for Dependency {
@@ -37,47 +46,29 @@ pub struct Provider {
     /// Provider key that uniquely identifies the provider.
     pub key: String,
 
+    /// Optional display name of the provider.
+    pub name: String,
+
+    /// Version of the provider.
+    pub version: Version,
+
     /// Optional identifier of the package for an external system e.g., a ProductCode for a Windows Installer package.
     #[allow(dead_code)] // TODO
     pub id: Option<String>,
 
-    /// Optional display name of the provider.
-    pub name: Option<String>,
-
-    /// Optional version of the provider.
-    pub version: Option<Version>,
+    /// Optional attributes used when checking dependencies.
+    pub attributes: Option<Attributes>,
 }
 
 impl Provider {
-    pub(crate) fn new(provider_key: impl Into<String>) -> Self {
-        Provider {
-            key: provider_key.into(),
-            ..Default::default()
-        }
-    }
-
-    pub(crate) fn from(provider_key: impl Into<String>, key: &Key) -> Self {
+    pub(crate) fn from(provider_key: impl Into<String>, key: &Key) -> crate::Result<Self> {
         // Equivalent to deputil:DepGetProviderInformation.
-        Provider {
-            key: provider_key.into(),
-            id: key.value(PCWSTR::null()).ok().and_then(|v| v.as_string()),
-            name: key
-                .value(w!("DisplayName"))
-                .ok()
-                .and_then(|v| v.as_string()),
-            version: key.value(w!("Version")).ok().and_then(|v| v.as_version()),
-        }
-    }
-
-    pub(crate) fn from_requires_display_name(
-        provider_key: impl Into<String>,
-        key: &Key,
-    ) -> Result<Self> {
         Ok(Provider {
             key: provider_key.into(),
-            name: key.value(w!("DisplayName"))?.as_string(),
-            id: key.value(PCWSTR::null()).ok().and_then(|v| v.as_string()),
-            version: key.value(w!("Version")).ok().and_then(|v| v.as_version()),
+            name: key.value(w!("DisplayName"))?.to_string()?,
+            version: key.value(w!("Version"))?.to_version()?,
+            id: key.value(PCWSTR::null())?.to_string().ok(),
+            ..Default::default()
         })
     }
 
@@ -88,15 +79,35 @@ impl Provider {
         #[allow(unused_variables)] // Prevent future breaking change; not currently used.
         attributes: Option<Attributes>,
         ignore: Option<&HashSet<String>>,
-    ) -> Result<Option<Vec<Provider>>> {
+    ) -> Result<Option<Vec<Dependency>>> {
         crate::check_dependents(&self.key, scope, attributes, ignore)
+    }
+
+    /// Registers the [`Provider`].
+    pub fn register(&self, scope: Scope) -> crate::Result<()> {
+        // Equivalent to deputil:DepRegisterDependency.
+        let key = Key::create::<HKEY, PCWSTR>(scope.into(), crate::ROOT_KEY)?;
+
+        let provider_key = crate::to_pcwstr(&self.key);
+        let key = key.create_subkey(provider_key)?;
+
+        key.set_value(Some(w!("DisplayName")), Data::String(self.name.to_string()))?;
+        key.set_value(Some(w!("Version")), Data::String(self.version.to_string()))?;
+        if let Some(id) = &self.id {
+            key.set_value(None, Data::String(id.to_string()))?;
+        }
+        if let Some(attributes) = self.attributes {
+            key.set_value(Some(w!("Attributes")), Data::DWord(attributes as u32))?;
+        }
+
+        Ok(())
     }
 }
 
 impl Display for Provider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(name) = &self.name {
-            return write!(f, "{} ({})", name, &self.key);
+        if !self.name.is_empty() {
+            return write!(f, "{} ({})", &self.name, &self.key);
         }
         write!(f, "{}", &self.key)
     }
@@ -118,22 +129,6 @@ impl hash::Hash for Provider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
-    };
-
-    #[test]
-    fn provider_equivalency() {
-        assert_eq!(Provider::new("test"), Provider::new("test"));
-        assert_eq!(hash(&Provider::new("test")), hash(&Provider::new("test")));
-    }
-
-    #[test]
-    fn provider_equivalency_case_insensitive() {
-        assert_eq!(Provider::new("test"), Provider::new("TEST"));
-        assert_eq!(hash(&Provider::new("test")), hash(&Provider::new("TEST")));
-    }
 
     #[test]
     fn provider_fmt() {
@@ -148,17 +143,11 @@ mod tests {
         assert_eq!(
             Provider {
                 key: "test".to_string(),
-                name: Some("display".to_string()),
+                name: "display".to_string(),
                 ..Default::default()
             }
             .to_string(),
             "display (test)"
         );
-    }
-
-    fn hash<T: Hash>(t: &T) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        t.hash(&mut hasher);
-        hasher.finish()
     }
 }

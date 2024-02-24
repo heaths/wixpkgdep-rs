@@ -13,12 +13,18 @@ use windows::{
     Win32::System::Registry::HKEY,
 };
 
+mod error;
 mod provider;
 mod registry;
 mod version;
 
-pub use provider::Provider;
+pub use error::Error;
+pub use provider::{Dependency, Provider};
 pub use version::Version;
+
+use registry::map_registry_error;
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Scope {
@@ -28,7 +34,7 @@ pub enum Scope {
     Machine,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u32)]
 pub enum Attributes {
     #[default]
@@ -37,16 +43,6 @@ pub enum Attributes {
     MinVersionInclusive = 0x100,
     MaxVersionInclusive = 0x200,
 }
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Error {
-    Format,
-    NotFound,
-    NotSupported,
-    RegistryError(windows::core::Error),
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
 
 const ROOT_KEY: PCWSTR = w!("Software\\Classes\\Installer\\Dependencies");
 const DEPENDENTS_KEY: PCWSTR = w!("Dependents");
@@ -64,7 +60,7 @@ where
         .open_subkey::<PCWSTR>(_provider_key)
         .map_err(map_registry_error)?;
 
-    Ok(Provider::from(provider_key, &key))
+    Provider::from(provider_key, &key)
 }
 
 /// Checks that the dependency is registered and within the requested version range.
@@ -74,7 +70,7 @@ pub fn check_dependencies<K>(
     min_version: Option<Version>,
     max_version: Option<Version>,
     attributes: Option<Attributes>,
-    dependencies: &mut HashSet<Provider>,
+    dependencies: &mut HashSet<Dependency>,
 ) -> Result<()>
 where
     K: AsRef<str> + Into<String>,
@@ -86,36 +82,36 @@ where
     // If the key or its Version value is missing, add it to the set of dependencies, and return NotFound.
     let _provider_key = to_pcwstr(provider_key.as_ref());
     let version: Version;
-    let key = match key
+    match key
         .open_subkey::<PCWSTR>(_provider_key)
         .map_err(map_registry_error)
     {
         Ok(k) => {
-            if let Some(_version) = key.value(w!("Version")).ok().and_then(|v| v.as_version()) {
+            if let Ok(_version) = key.value(w!("Version")).map(|v| v.to_version())? {
                 version = _version;
             } else {
                 // We only have the provider key at this time.
-                dependencies.insert(Provider::new(provider_key));
+                dependencies.insert(Dependency::new(provider_key));
                 return Err(Error::NotFound);
             }
             k
         }
         Err(Error::NotFound) => {
             // We only have the provider key at this time.
-            dependencies.insert(Provider::new(provider_key));
+            dependencies.insert(Dependency::new(provider_key));
             return Err(Error::NotFound);
         }
         Err(err) => return Err(err),
     };
 
     // Since the provider and Version were found, check the version range requirements.
-    let provider = Provider::from_requires_display_name(provider_key, &key)?;
+    let dependency = Dependency::new(provider_key);
     if let Some(min_version) = min_version {
         let allow_equal = (attributes.unwrap_or_default() & Attributes::MinVersionInclusive)
             == Attributes::MinVersionInclusive as u32;
 
         if !(allow_equal && min_version <= version || min_version < version) {
-            dependencies.insert(provider);
+            dependencies.insert(dependency);
             return Err(Error::NotFound);
         }
     }
@@ -125,7 +121,7 @@ where
             == Attributes::MaxVersionInclusive as u32;
 
         if !(allow_equal && version <= max_version || version < max_version) {
-            dependencies.insert(provider);
+            dependencies.insert(dependency);
             return Err(Error::NotFound);
         }
     }
@@ -140,7 +136,7 @@ pub fn check_dependents<K>(
     #[allow(unused_variables)] // Prevent future breaking change; not currently used.
     attributes: Option<Attributes>,
     ignore: Option<&HashSet<String>>,
-) -> Result<Option<Vec<Provider>>>
+) -> Result<Option<Vec<Dependency>>>
 where
     K: AsRef<str>,
 {
@@ -181,11 +177,7 @@ where
                 }
 
                 // BUGBUG: Should we check that the provider actually exists in case it didn't clean up during uninstall or was that meant for permanent packages?
-                if let Ok(p) = get_provider(&k.name, scope) {
-                    return Some(p);
-                }
-
-                Some(Provider::new(&k.name))
+                Some(Dependency::new(&k.name))
             })
             .collect(),
     ))
@@ -212,25 +204,6 @@ impl Display for Scope {
             Scope::User => write!(f, "user"),
             Scope::Machine => write!(f, "machine"),
         }
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::Format => write!(f, "invalid format"),
-            Error::NotFound => write!(f, "not found"),
-            Error::NotSupported => write!(f, "not supported"),
-            Error::RegistryError(err) => write!(f, "{}", err),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl From<windows::core::Error> for Error {
-    fn from(value: windows::core::Error) -> Self {
-        Error::RegistryError(value)
     }
 }
 
@@ -261,13 +234,6 @@ fn to_pcwstr(value: impl AsRef<str>) -> PCWSTR {
         .chain(std::iter::once(0))
         .collect();
     PCWSTR::from_raw(value.as_ptr())
-}
-
-fn map_registry_error(err: windows::core::Error) -> Error {
-    match err.code() {
-        registry::E_FILE_NOT_FOUND => Error::NotFound,
-        _ => Error::RegistryError(err),
-    }
 }
 
 #[cfg(test)]
